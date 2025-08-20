@@ -1,0 +1,7 @@
+fastapi>=0.95.0,<0.96.0
+uvicorn[standard]>=0.21.1,<0.22.0
+# Используем confluent-kafka для Python, который более стабилен
+confluent-kafka>=2.0.0,<3.0.0
+pydantic>=1.10.7,<2.0.0
+python-dotenv>=1.0.0,<2.0.0
+# Убираем aiokafka и kafka-python

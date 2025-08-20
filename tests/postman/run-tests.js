@@ -69,10 +69,41 @@ if (!fs.existsSync(environmentPath)) {
 // Parse reporters
 const reporters = argv.reporters.split(',').map(r => r.trim());
 
+// Load environment and collection for inspection
+const loadedCollection = require(collectionPath);
+const loadedEnvironment = require(environmentPath);
+
+// --- НАЧАЛО: Добавленный блок логирования ---
+console.log('--- Environment Debug Info ---');
+console.log(`Environment file used: ${argv.environment}.environment.json`);
+console.log('Loaded Environment Variables from file:');
+if (loadedEnvironment.values && Array.isArray(loadedEnvironment.values)) {
+    loadedEnvironment.values.forEach(v => {
+        if (v.enabled !== false) { // Log enabled variables, assume enabled if undefined
+            console.log(`  ${v.key} = ${v.value}`);
+        } else {
+            console.log(`  ${v.key} = ${v.value} (DISABLED in file)`);
+        }
+    });
+} else {
+    console.log('  No "values" array found in environment file or unexpected structure.');
+}
+
+console.log('\nDefault Collection Variables (fallback values):');
+if (loadedCollection.variable && Array.isArray(loadedCollection.variable)) {
+    loadedCollection.variable.forEach(v => {
+        console.log(`  ${v.key} = ${v.value}`);
+    });
+} else {
+    console.log('  No "variable" array found in collection or unexpected structure.');
+}
+console.log('--- End Environment Debug Info ---\n');
+// --- КОНЕЦ: Добавленный блок логирования ---
+
 // Configure Newman options
 const newmanOptions = {
-  collection: require(collectionPath),
-  environment: require(environmentPath),
+  collection: loadedCollection,
+  environment: loadedEnvironment,
   reporters: reporters,
   reporter: {
     htmlextra: {

@@ -1,3 +1,4 @@
+# docker-compose.yml
 version: '3.8'
 
 services:
@@ -43,7 +44,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_CREATE_TOPICS: "movie-events:1:1,user-events:1:1,payment-events:1:1"
+      KAFKA_CREATE_TOPICS: "cinema-abyss-events:1:1"
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
@@ -59,12 +60,19 @@ services:
     depends_on:
       - postgres
     ports:
-      - "8080:8080"
+      - "8085:8080" # Changed from 8080 to 8085
     environment:
       PORT: 8080
       DB_CONNECTION_STRING: postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable
     networks:
       - cinemaabyss-network
+    # --- ДОБАВЛЕНО: Healthcheck для monolith ---
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   # Movies Microservice
   movies-service:
@@ -81,6 +89,13 @@ services:
       DB_CONNECTION_STRING: postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable
     networks:
       - cinemaabyss-network
+    # --- ДОБАВЛЕНО: Healthcheck для movies-service ---
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/api/movies/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
   # Events Microservice
   events-service:
@@ -95,9 +110,17 @@ services:
       - "8082:8082"
     environment:
       PORT: 8082
-      KAFKA_BROKERS: kafka:9092
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      KAFKA_TOPIC: cinema-abyss-events
     networks:
       - cinemaabyss-network
+    # --- ДОБАВЛЕНО: Healthcheck для events-service ---
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8082/api/events/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
 
   # Proxy Service (API Gateway)
   proxy-service:
@@ -117,9 +140,16 @@ services:
       MOVIES_SERVICE_URL: http://movies-service:8081
       EVENTS_SERVICE_URL: http://events-service:8082
       GRADUAL_MIGRATION: "true"
-      MOVIES_MIGRATION_PERCENT: "50"
+      MOVIES_MIGRATION_PERCENT: "0" # Default to monolith
     networks:
       - cinemaabyss-network
+    # --- ДОБАВЛЕНО: Healthcheck для proxy-service ---
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
   # Kafka UI for monitoring Kafka
   kafka-ui:

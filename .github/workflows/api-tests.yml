@@ -1,10 +1,21 @@
+# .github/workflows/api-tests.yml
 name: API Tests
 
 on:
   push:
     branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'tests/postman/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/api-tests.yml'
   pull_request:
     branches: [ main, master ]
+    paths:
+      - 'src/**'
+      - 'tests/postman/**'
+      - 'docker-compose.yml'
+      - '.github/workflows/api-tests.yml'
   workflow_dispatch:
     inputs:
       environment:
@@ -24,24 +35,72 @@ jobs:
   api-tests:
     name: Run API Tests
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Docker Compose
         run: |
-          docker compose --version
-      
-      - name: Start services with Docker Compose
+          docker compose version
+
+      # --- ИЗМЕНЕНО И УЛУЧШЕНО: Запуск сервисов с диагностикой ---
+      - name: Start services with Docker Compose and wait
         run: |
+          echo "Starting services defined in docker-compose.yml..."
           docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 120
-      
+          
+          echo "Initial Docker Compose Status:"
+          docker compose ps
+          
+          echo "Waiting for services to be healthy..."
+          TIMEOUT=360 # 6 минут на всякий случай
+          INTERVAL=15
+          ELAPSED=0
+          
+          until [ $ELAPSED -ge $TIMEOUT ]; do
+            # --- ДИАГНОСТИКА: Выводим текущий статус сервисов ---
+            echo "---- Status check at ${ELAPSED}s ----"
+            docker compose ps
+            echo "--------------------------------------"
+            
+            # Проверяем, все ли сервисы Up
+            UP_COUNT=$(docker compose ps --format "table {{.Name}}\t{{.Status}}" | grep -c "Up.*ago)")
+            TOTAL_COUNT=$(docker compose config --services | wc -l)
+            
+            echo "Up services: $UP_COUNT / $TOTAL_COUNT"
+            
+            if [ "$UP_COUNT" -eq "$TOTAL_COUNT" ]; then
+              echo "All services are up."
+              break
+            fi
+            
+            echo "Still waiting for services... (${ELAPSED}s elapsed)"
+            sleep $INTERVAL
+            ELAPSED=$((ELAPSED + INTERVAL))
+          done
+          
+          if [ $ELAPSED -ge $TIMEOUT ]; then
+            echo "ERROR: Services did not start within $TIMEOUT seconds."
+            # Выводим финальный статус для отладки
+            echo "=== Final Docker Compose Status ==="
+            docker compose ps
+            # Выводим логи сервисов для отладки
+            echo "=== Docker Compose Logs (last 100 lines) ==="
+            docker compose logs --tail=100 || true
+            exit 1
+          fi
+          
+          echo "Waiting an additional 45 seconds for full application startup and readiness..."
+          sleep 45
+          
+          # --- ДОПОЛНИТЕЛЬНАЯ ДИАГНОСТИКА: Финальный статус ---
+          echo "=== Final Status Check Before Tests ==="
+          docker compose ps
+          echo "========================================="
+
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -49,23 +108,61 @@ jobs:
       
       - name: Install Newman and dependencies
         working-directory: tests/postman
-        run: npm install
-      
-      - name: Run API tests
+        run: |
+          npm ci
+          # Установим явно репортер, чтобы избежать проблем
+          npm install newman-reporter-junit
+
+      # --- ИЗМЕНЕНО И ИСПРАВЛЕНО: Запуск тестов внутри Docker ---
+      - name: Run API tests (inside Docker network)
         working-directory: tests/postman
         run: |
-
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
-          # Build the Docker image
-          docker build -t cinemaabyss-api-tests .
+          echo "Running API tests inside the Docker network..."
           
-          # Run the tests in Docker
-          docker run --network=cinemaabyss-network -v "$(pwd)/reports:/app/reports" cinemaabyss-api-tests
-        
-      
+          # Формируем аргументы для Newman
+          FOLDER_ARG=""
+          if [ -n "${{ github.event.inputs.test_folder }}" ]; then
+            # Экранируем значение для безопасности
+            FOLDER_ARG="--folder '${{ github.event.inputs.test_folder }}'"
+          fi
+          
+          ENV_ARG="--environment ${{ github.event.inputs.environment || 'docker' }}"
+          
+          # Используем только cli и junit репортеры
+          NEWMAN_CMD="npx newman run CinemaAbyss.postman_collection.json $ENV_ARG $FOLDER_ARG -r cli,junit --reporter-junit-export './reports/junit-report.xml'"
+          
+          echo "Executing command: $NEWMAN_CMD"
+          
+          mkdir -p reports
+          
+          # Запускаем Newman внутри контейнера Docker, подключенного к сети docker-compose
+          docker run --rm \
+            --network cinemaabyss-network \
+            -v "$(pwd):/etc/newman" \
+            -w /etc/newman \
+            node:18-alpine \
+            sh -c "npm install newman newman-reporter-junit && $NEWMAN_CMD"
+
+      # --- ДОБАВЛЕНО: Загрузка артефактов с отчетами ---
+      - name: Upload Test Reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-reports
+          path: tests/postman/reports/
+          retention-days: 30
+
+      # --- ДОБАВЛЕНО: Отладка логов сервисов в случае ошибки ---
+      - name: Debug: Show Docker Compose logs on failure
+        if: failure()
+        run: |
+          echo "=== Docker Compose Service Status (On Failure) ==="
+          docker compose ps
+          echo "=== Docker Compose Logs (On Failure) ==="
+          docker compose logs
+
       - name: Stop services
         if: always()
-        run: docker compose down
+        run: |
+          echo "Stopping Docker Compose services..."
+          docker compose down -v

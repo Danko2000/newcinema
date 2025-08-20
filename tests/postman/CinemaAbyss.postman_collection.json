@@ -772,7 +772,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:8080"
+      "value": "http://localhost:8085"
     },
     {
       "key": "moviesServiceUrl",
