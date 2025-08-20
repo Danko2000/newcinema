@@ -34,12 +34,11 @@ on:
 jobs:
   api-tests:
     name: Run API Tests
-    # Убрана проблемная секция `services:`
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4 # Обновлено до v4 для актуальности
+        uses: actions/checkout@v4 # Обновлено до v4
 
       - name: Set up Docker Compose
         run: |
@@ -51,7 +50,6 @@ jobs:
           docker compose up -d
           
           echo "Waiting for services to be healthy..."
-          # Простое, но эффективное ожидание. Можно улучшить с помощью wait-for-it.sh или подобных скриптов.
           timeout 300 bash -c 'until docker compose ps | grep -q "Up.*ago)"; do sleep 5; echo "Still waiting for services..."; done'
           echo "Services appear to be up. Waiting an additional 30 seconds for full startup..."
           sleep 30
@@ -65,36 +63,26 @@ jobs:
       
       - name: Install Newman and dependencies
         working-directory: tests/postman
-        run: |
-          npm ci
-          # Установим явно репортер, чтобы избежать проблем с htmlextra
-          # npm install newman-reporter-htmlextra newman-reporter-junit
-          # Но для начала используем только встроенные репортеры
+        run: npm ci
 
       - name: Run API tests (inside Docker network)
         working-directory: tests/postman
         run: |
           echo "Running API tests inside the Docker network..."
           
-          # Формируем аргументы для Newman
           FOLDER_ARG=""
           if [ -n "${{ github.event.inputs.test_folder }}" ]; then
-            # Экранируем значение для безопасности
             FOLDER_ARG="--folder '${{ github.event.inputs.test_folder }}'"
           fi
           
           ENV_ARG="--environment ${{ github.event.inputs.environment || 'docker' }}"
           
-          # Используем только cli и junit репортеры, которые встроены в Newman
-          # Это избавит нас от потенциальных проблем с установкой htmlextra в CI
           NEWMAN_CMD="npx newman run CinemaAbyss.postman_collection.json $ENV_ARG $FOLDER_ARG -r cli,junit --reporter-junit-export './reports/junit-report.xml'"
           
           echo "Executing command: $NEWMAN_CMD"
           
           mkdir -p reports
           
-          # Запускаем Newman внутри контейнера Docker, подключенного к сети docker-compose
-          # Предполагается, что сеть в docker-compose.yml названа 'cinemaabyss-network'
           docker run --rm \
             --network cinemaabyss-network \
             -v "$(pwd):/etc/newman" \
@@ -103,7 +91,7 @@ jobs:
             sh -c "npm install newman newman-reporter-junit && $NEWMAN_CMD"
 
       - name: Upload Test Reports
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # Обновлено до v4
         if: always()
         with:
           name: test-reports
