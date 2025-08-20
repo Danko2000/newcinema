@@ -4,7 +4,6 @@ name: API Tests
 on:
   push:
     branches: [ main, master ]
-    # --- ДОБАВЛЕНО: Триггер на изменения в тестах и сервисах ---
     paths:
       - 'src/**'
       - 'tests/postman/**'
@@ -12,7 +11,6 @@ on:
       - '.github/workflows/api-tests.yml'
   pull_request:
     branches: [ main, master ]
-    # --- ДОБАВЛЕНО: Триггер на изменения в тестах и сервисах ---
     paths:
       - 'src/**'
       - 'tests/postman/**'
@@ -36,40 +34,30 @@ on:
 jobs:
   api-tests:
     name: Run API Tests
+    # Убрана проблемная секция `services:`
     runs-on: ubuntu-latest
-    # --- ДОБАВЛЕНО: Необходимо для создания сети Docker Compose ---
-    services:
-      # Этот блок services не подходит для нашего случая, так как у нас сложный docker-compose.yml
-      # Вместо этого мы будем использовать docker compose напрямую в шагах.
-    
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Обновлено до v4 для актуальности
 
       - name: Set up Docker Compose
-        # --- ИЗМЕНЕНО: Убедимся, что у нас установлена последняя версия Docker Compose Plugin ---
         run: |
           docker compose version
-      
-      # --- ИЗМЕНЕНО: Запуск сервисов через docker compose ---
+
       - name: Start services with Docker Compose
         run: |
           echo "Starting services defined in docker-compose.yml..."
           docker compose up -d
           
-          # --- ДОБАВЛЕНО: Более надежное ожидание готовности сервисов ---
           echo "Waiting for services to be healthy..."
-          # Ждем до 5 минут
+          # Простое, но эффективное ожидание. Можно улучшить с помощью wait-for-it.sh или подобных скриптов.
           timeout 300 bash -c 'until docker compose ps | grep -q "Up.*ago)"; do sleep 5; echo "Still waiting for services..."; done'
           echo "Services appear to be up. Waiting an additional 30 seconds for full startup..."
           sleep 30
-          
-          # --- ДОПОЛНИТЕЛЬНО (по желанию): Проверка логов на наличие критических ошибок ---
-          # echo "Checking for startup errors..."
-          # docker compose logs | grep -i "error\|fail\|exception" || true
 
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4 # Обновлено до v4
         with:
           node-version: '18'
           cache: 'npm'
@@ -77,66 +65,53 @@ jobs:
       
       - name: Install Newman and dependencies
         working-directory: tests/postman
-        run: npm ci # Используем npm ci для более быстрой и надежной установки в CI
+        run: |
+          npm ci
+          # Установим явно репортер, чтобы избежать проблем с htmlextra
+          # npm install newman-reporter-htmlextra newman-reporter-junit
+          # Но для начала используем только встроенные репортеры
 
-      # --- ИЗМЕНЕНО И ИСПРАВЛЕНО: Запуск тестов внутри Docker ---
       - name: Run API tests (inside Docker network)
         working-directory: tests/postman
         run: |
           echo "Running API tests inside the Docker network..."
           
-          # --- ИСПРАВЛЕНО: Формируем команду Newman с правильными аргументами ---
-          # Определяем папку тестов, если указана
+          # Формируем аргументы для Newman
           FOLDER_ARG=""
           if [ -n "${{ github.event.inputs.test_folder }}" ]; then
-            FOLDER_ARG="--folder \"${{ github.event.inputs.test_folder }}\""
+            # Экранируем значение для безопасности
+            FOLDER_ARG="--folder '${{ github.event.inputs.test_folder }}'"
           fi
           
-          # Определяем окружение
           ENV_ARG="--environment ${{ github.event.inputs.environment || 'docker' }}"
           
-          # Команда Newman для запуска внутри контейнера
-          NEWMAN_CMD="npx newman run CinemaAbyss.postman_collection.json $ENV_ARG $FOLDER_ARG -r cli,junit --reporter-junit-export 'reports/junit-report.xml'"
+          # Используем только cli и junit репортеры, которые встроены в Newman
+          # Это избавит нас от потенциальных проблем с установкой htmlextra в CI
+          NEWMAN_CMD="npx newman run CinemaAbyss.postman_collection.json $ENV_ARG $FOLDER_ARG -r cli,junit --reporter-junit-export './reports/junit-report.xml'"
           
-          echo "Executing: $NEWMAN_CMD"
+          echo "Executing command: $NEWMAN_CMD"
           
-          # Создаем директорию для отчетов
           mkdir -p reports
           
-          # --- ИСПРАВЛЕНО: Запускаем Newman внутри контейнера Docker, подключенного к сети docker-compose ---
-          # Получаем имя сети, созданной docker-compose (обычно это <project_name>_default)
-          # Мы можем получить его напрямую, если знаем имя проекта, или через docker compose
-          # Проще всего - использовать имя сети из docker-compose.yml или дефолтное.
-          # В вашем docker-compose.yml сеть называется `cinemaabyss-network`.
-          # Но docker compose может добавить префикс. Проверим.
-          # docker compose config --services покажет сервисы
-          # docker network ls покажет сети
-          
-          # Запускаем контейнер с Newman, подключенный к сети docker-compose
-          # Монтируем текущую директорию в /etc/newman внутри контейнера
-          # Используем node:18-alpine, устанавливаем Newman и запускаем команду
-          
+          # Запускаем Newman внутри контейнера Docker, подключенного к сети docker-compose
+          # Предполагается, что сеть в docker-compose.yml названа 'cinemaabyss-network'
           docker run --rm \
             --network cinemaabyss-network \
             -v "$(pwd):/etc/newman" \
             -w /etc/newman \
             node:18-alpine \
             sh -c "npm install newman newman-reporter-junit && $NEWMAN_CMD"
-          
-          # Код возврата docker run будет передан, если тесты провалятся, workflow остановится
-      
-      # --- ДОБАВЛЕНО: Загрузка артефактов с отчетами ---
+
       - name: Upload Test Reports
         uses: actions/upload-artifact@v3
-        if: always() # Загружаем даже если тесты провалились
+        if: always()
         with:
           name: test-reports
           path: tests/postman/reports/
           retention-days: 30
 
-      # --- ИЗМЕНЕНО: Остановка сервисов ---
       - name: Stop services
-        if: always() # Останавливаем всегда, даже если предыдущие шаги провалились
+        if: always()
         run: |
           echo "Stopping Docker Compose services..."
-          docker compose down -v # -v удаляет и анонимные volumes
+          docker compose down -v
