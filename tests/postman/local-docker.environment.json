@@ -1,28 +1,28 @@
 {
-  "id": "local-env",
-  "name": "Local Environment",
+  "id": "docker-env",
+  "name": "Docker Environment (via Host)",
   "values": [
     {
       "key": "baseUrl",
-      "value": "http://127.0.0.1:8085",
+      "value": "http://localhost:8085",
       "type": "default",
       "enabled": true
     },
     {
       "key": "moviesServiceUrl",
-      "value": "http://127.0.0.1:8081",
+      "value": "http://localhost:8081",
       "type": "default",
       "enabled": true
     },
     {
       "key": "eventsServiceUrl",
-      "value": "http://127.0.0.1:8082",
+      "value": "http://localhost:8082",
       "type": "default",
       "enabled": true
     },
     {
       "key": "proxyServiceUrl",
-      "value": "http://127.0.0.1:8000",
+      "value": "http://localhost:8000",
       "type": "default",
       "enabled": true
     }
